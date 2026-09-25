@@ -1,0 +1,18 @@
+# conda env create -f environment.yml && conda activate pyrats
+# Then install pysynch from a clone (see README.md); BRATS separately if needed.
+name: pyrats
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - astropy
+  - matplotlib
+  - radio-beam
+  - reproject
+  - gsl            # required to build pysynch's C extension
+  - c-compiler     # ditto
+  - pip
+  - pip:
+      - git+https://github.com/synchrofit/synchrofit.git

@@ -1,9 +1,30 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+#
+# PyRATS -- spectral ageing and energetics of radio sources (PySynch + BRATS)
+# Copyright (C) 2026  Sushant Dutta
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 """
-PySynch_BRATS.py
+PyRATS.py
 
-Author : Sushant Dutta
+Author  : Sushant Dutta
+License : GPL-3.0-or-later (see LICENSE)
+
+PyRATS drives two established spectral-ageing engines -- the Python
+synchrotron libraries synchrofit and pysynch, and BRATS -- from one
+command line, on one common pixel grid, with one error model.
 
 
 ===============================================================================
@@ -323,6 +344,7 @@ import math
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -714,7 +736,8 @@ class _suppressed_stdout:
 
     def __init__(self, enabled: bool = True) -> None:
         self.enabled = enabled and not bool(
-            os.environ.get("PYSYNCH_VERBOSE_BACKENDS")
+            (os.environ.get("PYRATS_VERBOSE_BACKENDS")
+             or os.environ.get("PYSYNCH_VERBOSE_BACKENDS"))
         )
         self._saved = None
         self._devnull = None
@@ -792,7 +815,9 @@ TESLA_PER_MICROGAUSS = 1.0e-10
 #: from nu_c = (3/2) gamma^2 e B sin(theta) / (2 pi m_e)
 SYNCH_NU_C = 3.0 * E_CHARGE / (4.0 * math.pi * M_ELECTRON)   # ~4.1993e10
 
-DEFAULT_REDSHIFT = 0.146914
+# There is deliberately no default redshift. Every distance, luminosity,
+# B_CMB, k-correction and spectral age depends on it, and a silent default
+# gives confidently wrong physics for any source it does not belong to.
 DEFAULT_GAMMA_MIN = 10.0
 DEFAULT_GAMMA_MAX = 1.0e7
 DEFAULT_KAPPA = 0.0               # proton:electron energy ratio -> zeta = 1+kappa
@@ -1628,7 +1653,7 @@ def regrid_and_common_beam(
         if key in radio_map.header:
             header[key] = radio_map.header[key]
     header["HISTORY"] = (
-        f"PySynch v{__version__}: regridded then convolved to common beam"
+        f"PyRATS v{__version__}: regridded then convolved to common beam"
     )
     return smoothed, footprint, header
 
@@ -1664,7 +1689,7 @@ def product_header(
         h["BMIN"] = beam.minor.to_value(u.deg)
         h["BPA"] = beam.pa.to_value(u.deg)
     h["BUNIT"] = bunit
-    h["PYSYNCH"] = (__version__, "PySynch pipeline version")
+    h["PYRATS"] = (__version__, "PyRATS pipeline version")
     if extra:
         for key, value in extra.items():
             try:
@@ -1715,8 +1740,8 @@ def hysteresis_source_mask(
     field crowded enough that a neighbour also clears `high_sigma` somewhere
     within itself -- not a rare situation once the detection map is chosen
     for depth rather than frequency -- every such neighbour is kept too, and
-    integrated photometry silently includes their flux. Measured on
-    J021926-051535: switching the detection map to the deepest band (MeerKAT,
+    integrated photometry silently includes their flux. Measured on a
+    test source: switching the detection map to the deepest band (MeerKAT,
     peak/rms ~ 700) grew the mask from 188 to 489 pixels across THREE
     disconnected components, of which only one -- 241 px, centred within a
     pixel of the known target -- was the source; the other two were
@@ -2353,7 +2378,7 @@ def kcorrection_ln_sigma(redshift: float, alpha_err: Optional[float]) -> float:
     and the spectral-index error enters as ln(1+z) * sigma_alpha.
 
     This is NOT a small correction at high redshift and it is easy to forget.
-    For J021926-051535 at z = 1.47 with sigma_alpha = 0.32 it comes to 28.5
+    For a source at z = 1.47 with sigma_alpha = 0.32 it comes to 28.5
     per cent, against flux errors of 5-10 per cent -- so it dominates the
     error budget of every luminosity and emissivity point on the plot.
 
@@ -4197,7 +4222,8 @@ def equipartition_analysis(
     # again; handed the original gamma_max they hit the same underflow, the
     # calibration found "fewer than two valid probe points", and the caller
     # threw the whole aged solve away and fell back to an unbroken power law
-    # -- biasing B_eq high by a factor of ~3 on J021926. Re-solving both
+    # -- which on one test source biased B_eq high by a factor of ~3 and on
+    # another low by 3 per cent, so the error has no reliable sign. Re-solving both
     # methods at the one gamma_max that works also keeps equipartition and
     # minimum energy on the same electron population.
     recovered_g = [float(r["gamma_max_used"]) for r in direct.values()
@@ -5095,8 +5121,8 @@ def self_consistent_solution(
                 "the number of radiating electrons above the break and "
                 "therefore biases u_e and B_eq -- usually high, but the size "
                 "and even the sign depend on where the break sits relative to "
-                "the normalisation frequency (J021926, 6 bands: 3-10x high; "
-                "5 bands: 3% low). Treat these values as "
+                "the normalisation frequency (seen on test data: from 3-10x "
+                "high to 3% low). Treat these values as "
                 "provisional. The usual cause is a gamma_max far above the "
                 "ageing break, where the aged spectrum underflows to zero: "
                 "LOWER --gamma-max towards the break; do not widen it."
@@ -6605,7 +6631,7 @@ class BratsRunner:
         # The interpreter's own bin directory. BRATS is commonly installed
         # into the same conda environment as the Python stack, and that
         # directory is only on PATH while the environment is ACTIVATED --
-        # running the script as `/path/to/envs/foo/bin/python3 PySynch...`
+        # running the script as `/path/to/envs/foo/bin/python3 PyRATS...`
         # is enough to import everything and still leave `which brats`
         # empty. Looking next to sys.executable finds it either way.
         candidates.append(str(Path(sys.executable).resolve().parent / "brats"))
@@ -6982,7 +7008,7 @@ def write_ds9_box_region(
     """
     lines = [
         "# Region file format: DS9 version 4.1",
-        f"# {comment}" if comment else "# generated by PySynch",
+        f"# {comment}" if comment else "# generated by PyRATS",
         "image",
         f"box({x_centre + 1.0:.3f},{y_centre + 1.0:.3f},"
         f"{width:.3f},{height:.3f},0)",
@@ -7135,7 +7161,7 @@ def prepare_brats_workspace(
     source_region: Optional[Path] = None,
     source_margin_beams: float = 2.0,
     common_beam: Optional[Beam] = None,
-    target_name: str = "PYSYNCH_SOURCE",
+    target_name: str = "PYRATS_SOURCE",
 ) -> Dict[str, Any]:
     """
     Build a complete BRATS working directory from the common-beam products.
@@ -7299,7 +7325,7 @@ def write_brats_ci_files(
     redshift: float,
     b_field_t: float,
     alpha_inj_positive: float,
-    identifier: str = "PYSYNCH_SOURCE",
+    identifier: str = "PYRATS_SOURCE",
 ) -> Dict[str, Path]:
     """
     Write the two comma-delimited files that BRATS' CI/CI-off fitting reads.
@@ -8432,7 +8458,7 @@ def source_contour_mask(
                     # region back over a neighbour that sits just outside
                     # the segmentation, and the neighbour is then contoured
                     # as a set of open arcs floating in blank sky beside the
-                    # source. (Seen on J021926-051535: a companion ~20 arcsec
+                    # source. (Seen on a test field: a companion ~20 arcsec
                     # east produced exactly that.) Excluding the neighbours
                     # explicitly is the only version that holds when the
                     # field is busy.
@@ -8691,7 +8717,7 @@ def run_brats_analysis(
         background_region=cfg.get("brats_background_region"),
         source_region=cfg.get("brats_source_region"),
         common_beam=common_beam,
-        target_name=str(cfg.get("brats_target_name", "PYSYNCH_SOURCE")),
+        target_name=str(cfg.get("brats_target_name", "PYRATS_SOURCE")),
     )
 
     result: Dict[str, Any] = {
@@ -8777,7 +8803,7 @@ def run_brats_analysis(
                     workspace, sed["frequency_Hz"], sed["flux_Jy"],
                     sed["flux_err_Jy"], sed["detected"], redshift,
                     float(b_field_t), alpha_positive,
-                    identifier=str(cfg.get("brats_target_name", "PYSYNCH_SOURCE")),
+                    identifier=str(cfg.get("brats_target_name", "PYRATS_SOURCE")),
                 )
             except Exception as exc:                           # noqa: BLE001
                 result["ci_file_error"] = str(exc)
@@ -9121,7 +9147,7 @@ def _write_brats_banner(
 
     lines = [
         "=" * 74,
-        f" BRATS workspace prepared by PySynch v{__version__}",
+        f" BRATS workspace prepared by PyRATS v{__version__}",
         "=" * 74,
         "",
         "Everything BRATS needs is already here. You are in the working",
@@ -9320,7 +9346,7 @@ def render_brats_products(
                 # reaches far enough past the segmentation to pick up
                 # neighbouring emission and draw it as open arcs in blank
                 # sky; the two paths must agree or the BRATS figures carry
-                # stray fragments the PySynch figures do not.
+                # stray fragments the PyRATS figures do not.
                 grow_pixels=int(max(2, round(0.5 * math.sqrt(max(
                     beam_area_pixels(common_beam, target_wcs), 1.0
                 ))))) if common_beam is not None else 2,
@@ -9332,7 +9358,7 @@ def render_brats_products(
     if reference_map is not None:
         ref_image = np.asarray(reference_map.data, dtype=float)
         # The ladder MUST be built with the same factor and level cap the
-        # PySynch figures used. Falling back to this helper's own defaults
+        # PyRATS figures used. Falling back to this helper's own defaults
         # gave the BRATS maps 9 contours where every other figure in the
         # same run had 6, so the two engines' maps could not be compared
         # by eye -- which is the entire point of producing both.
@@ -9753,7 +9779,7 @@ def compare_engines(
     # per-pixel sigma_alpha BRATS reports is inflated by roughly that factor.
     # Checked numerically on this source: correct propagation gives 0.127,
     # the BRATS weighting gives 0.803, BRATS itself reports 0.670, and this
-    # pipeline's own fit gives 0.135 -- i.e. PySynch agrees with correct
+    # pipeline's own fit gives 0.135 -- i.e. PyRATS agrees with correct
     # propagation to 6 per cent while BRATS is high by a factor of ~5.
     #
     # It affects the ERRORS only. The spectral index VALUES are unaffected,
@@ -9786,7 +9812,7 @@ def compare_engines(
 def _format_brats_summary(result: Dict[str, Any]) -> str:
     """Human-readable account of what the BRATS stage did and produced."""
     lines = [
-        f"BRATS STAGE SUMMARY  (PySynch v{__version__})",
+        f"BRATS STAGE SUMMARY  (PyRATS v{__version__})",
         "=" * 74,
         f"Generated  : {time.strftime('%Y-%m-%d %H:%M:%S %Z')}",
         f"Executable : {result.get('executable') or 'NOT FOUND'}",
@@ -9964,7 +9990,7 @@ def _format_brats_summary(result: Dict[str, Any]) -> str:
     ]
     for note in (
         "BRATS ages are conditional on the magnetic field it was given. The "
-        "field above came from the PySynch equipartition solution, so a BRATS "
+        "field above came from the PyRATS equipartition solution, so a BRATS "
         "age and a synchrofit age computed at the same field are directly "
         "comparable; ages from a different assumed field are not.",
         "BRATS was handed the same per-map RMS and flux-calibration errors "
@@ -11062,7 +11088,6 @@ def save_injection_scan_plot(output: Path, scans: Dict[str, Any]) -> None:
         return
     fig, axes = plt.subplots(1, 2, figsize=(11.6, 4.9), constrained_layout=True)
     for name, scan in sorted(usable.items()):
-        s = np.asarray([n["s"] for n in scan["nodes"]], dtype=float)
         chi2 = np.asarray([n["chi2"] for n in scan["nodes"]], dtype=float)
         alpha = -np.asarray(
             [n["alpha_inj_signed"] for n in scan["nodes"]], dtype=float
@@ -11304,7 +11329,7 @@ def save_source_properties_text(
 ) -> None:
     """Human-readable summary of every headline number, with its provenance."""
     lines: List[str] = [
-        "PySynch v{} -- SOURCE PHYSICAL PROPERTIES".format(__version__),
+        "PyRATS v{} -- SOURCE PHYSICAL PROPERTIES".format(__version__),
         "=" * 72,
         f"Source: {source_label}",
         f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S %Z')}",
@@ -11707,7 +11732,7 @@ def parse_images(items: Sequence[str]) -> List[Tuple[str, Path]]:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="PySynch.py",
+        prog="PyRATS.py",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         description=(
             "Publication-grade radio-source synchrotron analysis: common-beam "
@@ -11720,7 +11745,7 @@ def build_parser() -> argparse.ArgumentParser:
             --------
             Four-band analysis with the full ensemble and resolved maps:
 
-              python PySynch.py \\
+              python PyRATS.py \\
                 --image L150=lofar_150.fits --image G400=ugmrt_400.fits \\
                 --image G650=ugmrt_650.fits --image L1400=vla_1400.fits \\
                 --reference-label L1400 --redshift 0.1469 \\
@@ -11754,7 +11779,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Print how every noise and calibration value was obtained.")
 
     g = p.add_argument_group("source and cosmology")
-    g.add_argument("--redshift", type=float, default=DEFAULT_REDSHIFT)
+    g.add_argument(
+        "--redshift", type=float, default=None,
+        help="Source redshift. REQUIRED with --image; there is no default.",
+    )
     g.add_argument("--h0", type=float, default=70.0, help="H0 in km/s/Mpc.")
     g.add_argument("--om0", type=float, default=0.3)
     g.add_argument(
@@ -11959,7 +11987,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Your own DS9 source region instead of the automatic box.")
     g.add_argument("--brats-background-region", type=Path,
                    help="Your own DS9 background region instead of the automatic box.")
-    g.add_argument("--brats-target-name", default="PYSYNCH_SOURCE")
+    g.add_argument("--brats-target-name", default="PYRATS_SOURCE")
     g.add_argument("--brats-timeout", type=float, default=None,
                    help="Seconds before a scripted BRATS run is abandoned.")
     g.add_argument("--brats-keep-own-noise", action="store_true",
@@ -12047,17 +12075,22 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Raise all Monte-Carlo counts and enable B-marginalised "
                         "Tribble fits and posterior grids.")
     g.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    g.add_argument("--output-dir", type=Path, default=Path("PySynch_Products"))
+    g.add_argument("--output-dir", type=Path, default=Path("PyRATS_Products"))
     g.add_argument("--keep-stale", action="store_true",
                    help="Do not delete products from a previous run.")
     g.add_argument("--version", action="version",
-                   version=f"PySynch {__version__}")
+                   version=f"PyRATS {__version__}")
     return p
 
 
 PRODUCT_FILENAMES = {
     "input_FITS_header_summary.json", "common_beam_noise_summary.json",
-    "integrated_SED.csv", "PySynch_results.json", "PySynch_report.txt",
+    "integrated_SED.csv", "PyRATS_results.json", "PyRATS_report.txt",
+    # Legacy names from when this pipeline was called PySynch_BRATS. Kept so
+    # that re-running into an output directory written by an older version
+    # clears its products too, instead of leaving a confusing mix of
+    # PySynch_* and PyRATS_* files side by side.
+    "PySynch_results.json", "PySynch_report.txt",
     "source_properties.txt", "source_mask.fits", "depth_map.fits",
     "spectral_index.fits", "spectral_index_error_stat.fits",
     "spectral_index_error_sys.fits", "spectral_index_error_total.fits",
@@ -12225,12 +12258,22 @@ def collect_inputs_interactively() -> Dict[str, Any]:
         value = input(f"{prompt} [{default}]: ").strip()
         return float(value) if value else float(default)
 
-    redshift = ask_float("Source redshift", DEFAULT_REDSHIFT)
+    while True:
+        raw_z = input("Source redshift (required): ").strip()
+        try:
+            redshift = float(raw_z)
+        except ValueError:
+            print("  A redshift is required -- every age and luminosity "
+                  "depends on it.")
+            continue
+        if 0.0 < redshift < 20.0:
+            break
+        print("  Redshift must lie in (0, 20).")
     source_sigma = ask_float("Detection threshold (sigma)", DEFAULT_SOURCE_SIGMA)
     kappa = ask_float("Proton:electron energy ratio kappa", DEFAULT_KAPPA)
     resolved = input("Compute resolved ageing maps? [y/N]: ").strip().lower() in {"y", "yes"}
     raw_out = input(
-        f"Output directory [{Path.cwd() / 'PySynch_Products'}]: "
+        f"Output directory [{Path.cwd() / 'PyRATS_Products'}]: "
     ).strip()
 
     return {
@@ -12242,7 +12285,7 @@ def collect_inputs_interactively() -> Dict[str, Any]:
         "resolved_ageing": resolved,
         "output_dir": (
             Path(raw_out).expanduser().resolve() if raw_out
-            else (Path.cwd() / "PySynch_Products").resolve()
+            else (Path.cwd() / "PyRATS_Products").resolve()
         ),
         "header_summaries": summaries,
     }
@@ -12257,15 +12300,56 @@ def _banner(text: str) -> None:
     print("-" * min(len(text), 78))
 
 
+def pasteable_command(command_line: str, indent: str = "  ") -> List[str]:
+    """
+    Split a recorded command into one option per line, with shell
+    continuations, so it can be pasted straight back into a terminal.
+
+    Wrapping it at a fixed width instead breaks lines between a flag and its
+    value with no trailing backslash, and pasted into a shell every line then
+    runs as a separate (failing) command -- which defeats the point of
+    recording it.
+    """
+    try:
+        tokens = shlex.split(command_line)
+    except ValueError:
+        return [indent + command_line]
+    if not tokens:
+        return []
+    # Everything before the first option (interpreter + script) stays on
+    # one line; after that, each option starts a new line with its values.
+    groups: List[List[str]] = [[tokens[0]]]
+    for tok in tokens[1:]:
+        if tok.startswith("--"):
+            groups.append([tok])
+        else:
+            groups[-1].append(tok)
+    lines = [shlex.join(g) for g in groups]
+    return [
+        indent + ("" if i == 0 else "  ") + ln
+        + (" \\" if i < len(lines) - 1 else "")
+        for i, ln in enumerate(lines)
+    ]
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     t_start = time.time()
     args = build_parser().parse_args(argv)
 
     # -- inputs ------------------------------------------------------------
     if args.image:
+        if args.redshift is None:
+            raise SystemExit(
+                "--redshift is required: distances, luminosities, B_CMB and "
+                "every spectral age depend on it, so there is no default."
+            )
+        if not (0.0 < float(args.redshift) < 20.0):
+            raise SystemExit(
+                f"--redshift {args.redshift} is outside (0, 20); check the value."
+            )
+        redshift = float(args.redshift)
         image_specs = parse_images(args.image)
         reference_label = args.reference_label
-        redshift = float(args.redshift)
         source_sigma = float(args.source_sigma)
         kappa = float(args.kappa)
         resolved_requested = bool(args.resolved_ageing)
@@ -13054,13 +13138,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             b_for_brats = float(
                 solution["equipartition"]["direct"]["equipartition"]["B_T"]
             )
-            b_source = "PySynch equipartition (self-consistent)"
+            b_source = "PyRATS equipartition (self-consistent)"
             if getattr(args, "analysis_at_sub_equipartition", False):
                 _frac = float(args.b_field_fraction)
                 if _frac > 0:
                     b_for_brats *= _frac
                     b_source = (
-                        f"{_frac:g} x PySynch equipartition "
+                        f"{_frac:g} x PyRATS equipartition "
                         "(sub-equipartition, applied to the whole analysis)"
                     )
         else:
@@ -13487,14 +13571,33 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     # -- machine-readable results -------------------------------------------
     result = {
+        "pyrats_version": __version__,
+        # legacy key, kept so readers written for the PySynch_BRATS era work
         "pysynch_pipeline_version": __version__,
+        # The exact invocation. Without it a results file cannot be
+        # reproduced: defaults change between versions (the detection map
+        # did), and a flag that is not recorded cannot be recovered from the
+        # outputs alone.
+        # Recorded as `python <script path as it was typed>`: the bare file
+        # name only runs if the script is executable and on PATH, and it
+        # loses where the script actually lives. Relative paths in the
+        # command are relative to working_directory, recorded next to it.
+        "command_line": shlex.join(
+            ["python", sys.argv[0] if sys.argv and sys.argv[0] else "PyRATS.py"]
+            + [str(a) for a in (argv if argv is not None else sys.argv[1:])]
+        ),
+        "working_directory": str(Path.cwd()),
         "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "runtime_seconds": float(time.time() - t_start),
         "environment": {
             "python": sys.version.split()[0],
             "platform": platform.platform(),
             "numpy": np.__version__,
+            "scipy": __import__("scipy").__version__,
             "astropy": __import__("astropy").__version__,
+            "matplotlib": matplotlib.__version__,
+            "radio_beam": getattr(__import__("radio_beam"), "__version__", "?"),
+            "reproject": getattr(__import__("reproject"), "__version__", "?"),
             "pysynch_available": HAVE_PYSYNCH,
             "pysynch_import_error": (
                 str(PYSYNCH_IMPORT_ERROR) if PYSYNCH_IMPORT_ERROR else None
@@ -13566,7 +13669,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             p.name for p in outdir.iterdir() if p.is_file()
         ),
     }
-    (outdir / "PySynch_results.json").write_text(
+    (outdir / "PyRATS_results.json").write_text(
         json.dumps(json_safe_copy(result), indent=2)
     )
 
@@ -13592,11 +13695,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         _brats_report_line = "not requested"
 
     report: List[str] = [
-        f"PySynch v{__version__} -- analysis report",
+        f"PyRATS v{__version__} -- analysis report",
         "=" * 72,
         f"Generated        : {time.strftime('%Y-%m-%d %H:%M:%S %Z')}",
         f"Runtime          : {time.time() - t_start:.1f} s",
         f"Output directory : {outdir}",
+        "",
+        "COMMAND LINE (re-run this to reproduce)",
+        "-" * 72,
+        *pasteable_command(result.get("command_line", "")),
+        f"  (run from {result.get('working_directory', '?')})",
         "",
         "BACKENDS",
         "-" * 72,
@@ -13651,9 +13759,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "  Non-detections are kept as measured (including negative values) and",
         "  excluded from fits rather than clipped to a positive floor.",
         "  See source_properties.txt for the full numerical summary and",
-        "  PySynch_results.json for every intermediate quantity.",
+        "  PyRATS_results.json for every intermediate quantity.",
     ]
-    (outdir / "PySynch_report.txt").write_text("\n".join(report) + "\n")
+    (outdir / "PyRATS_report.txt").write_text("\n".join(report) + "\n")
 
     _banner("Complete")
     print(f"  Output directory : {outdir}")

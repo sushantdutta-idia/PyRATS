@@ -1,0 +1,18 @@
+# Core dependencies (pip-installable). Exact versions PyRATS was validated
+# with are listed in README.md under "Tested environment".
+numpy
+scipy
+astropy
+matplotlib
+radio-beam
+reproject
+
+# Spectral-ageing model ensemble (JP, KP, JP-Tribble, KP-Tribble, CI, CI-off).
+# Optional: without it PyRATS still produces maps, SEDs and spectral indices.
+synchrofit @ git+https://github.com/synchrofit/synchrofit.git
+
+# NOT installable from this file -- see README.md, "Installation":
+#   pysynch (Martin Hardcastle)  equipartition / minimum energy; needs GSL and
+#                                a C compiler, install from a clone with
+#                                `pip install .`
+#   BRATS   (Jeremy Harwood)     only for --engine brats / both

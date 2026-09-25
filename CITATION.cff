@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: >-
+  If you use PyRATS in your research, please cite it as below. PyRATS drives
+  BRATS, synchrofit and pysynch; please also cite those packages and the
+  papers describing them (see README.md, "Citing").
+title: PyRATS
+abstract: >-
+  Spectral ageing and energetics of extended radio sources: common-beam
+  regridding, integrated SEDs, a six-model spectral-ageing ensemble,
+  equipartition and minimum-energy magnetic fields, and resolved
+  spectral-index and spectral-age maps, with BRATS and synchrofit run on the
+  same pixel grid and error model.
+type: software
+authors:
+  - family-names: Dutta
+    given-names: Sushant
+version: 2.1.0
+license: GPL-3.0-or-later
+keywords:
+  - radio astronomy
+  - synchrotron
+  - spectral ageing
+  - equipartition
+  - radio galaxies
