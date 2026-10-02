@@ -1,21 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-#
-# PyRATS -- spectral ageing and energetics of radio sources (PySynch + BRATS)
-# Copyright (C) 2026  Sushant Dutta
-#
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 """
 PyRATS.py
 
@@ -25,314 +10,6 @@ License : GPL-3.0-or-later (see LICENSE)
 PyRATS drives two established spectral-ageing engines -- the Python
 synchrotron libraries synchrofit and pysynch, and BRATS -- from one
 command line, on one common pixel grid, with one error model.
-
-
-===============================================================================
-WHAT THIS PIPELINE PRODUCES
-===============================================================================
-
-From a set of cropped radio continuum FITS images at different frequencies:
-
-  input FITS maps
-    -> automatic robust noise + calibration-systematic characterisation
-    -> astrometric reference selection
-    -> WCS regridding onto one common pixel grid (true footprint intersection)
-    -> convolution to one common restoring beam
-    -> whole-source hysteresis segmentation
-    -> integrated SED (with proper non-detection handling)
-    -> 3-D geometry and SOURCE VOLUME (four independent estimators)
-    -> INJECTION INDEX from a six-model spectral-ageing ensemble
-         (JP, KP, JP-Tribble, KP-Tribble, CI, CI-OFF)
-       with explicit identifiability gating and AICc/BIC model averaging
-    -> EQUIPARTITION and TRUE MINIMUM-ENERGY magnetic fields
-    -> u_e, u_B, u_min, total energy, minimum pressure (+ full Monte Carlo)
-    -> self-consistent alpha_inj <-> B <-> aged-electron-spectrum iteration
-    -> resolved SPECTRAL-INDEX, CURVATURE and ERROR maps
-       (statistical and calibration systematics reported separately)
-    -> optional resolved SPECTRAL-AGE / BREAK-FREQUENCY / B_eq / pressure maps
-    -> FITS + publication-ready PNG + JSON + CSV + human-readable report
-
-===============================================================================
-SCIENTIFIC RATIONALE
-===============================================================================
-
-(1) SYNCHROFIT API ADAPTER  [correctness-critical]
-    Current synchrofit master exposes
-
-        spectral_fitter(...)  -> (params, discretized_parameters,
-                                  marginal_distributions, probability_vector,
-                                  mesh_parameters, normalisation_vector)
-        spectral_fitter_(...) -> params                       (8-tuple)
-        spectral_model(fit_type, mesh_parameters,
-                       normalisation_vector, frequency,
-                       probability_vector, ...)
-        spectral_model_(params, frequency, mc_length=..., ...)
-
-    v1 called `spectral_fitter` and then unpacked the result as if it were the
-    8-tuple `params`.  On any recent synchrofit this raises inside the parse
-    block and every ageing fit silently degrades to status="parse_failed".
-    v2 introspects the installed API at import time and normalises BOTH
-    conventions onto a single internal record.  It also exploits the new API's
-    `probability_vector` / `mesh_parameters` to build *marginal posteriors*
-    for the injection index and break frequency, which is far more defensible
-    than a grid-peak +/- value when the spectrum is sparsely sampled.
-
-(2) INJECTION INDEX  [the central scientific quantity here]
-    A low-frequency power-law slope is an OBSERVED spectral index.  It equals
-    the injection index only if the emitting plasma is unaged at those
-    frequencies, which cannot be assumed.  v1 wired only the single
-    user-selected model into main() and never called its own ensemble routine.
-    v2:
-      * always fits the full six-model ensemble when synchrofit is available;
-      * gates every model on formal identifiability (n_points > k + 1),
-        because with 3-4 bands AICc is undefined for the 3-parameter models
-        and CI-OFF (k = 4) is unconstrained;
-      * additionally runs a RESTRICTED ensemble in which s is held fixed and
-        only (normalisation, break) are free (k = 2), which IS identifiable
-        with 4 bands, and reports it as the recommended product at low band
-        count;
-      * performs a parametric bootstrap over the flux uncertainties so the
-        quoted error is not purely the grid spacing;
-      * for the Tribble variants, marginalises over the magnetic-field
-        uncertainty instead of conditioning on one B value;
-      * combines models by AICc weights and reports the between-model scatter
-        explicitly as a *model systematic*, separate from the statistical error;
-      * enforces the physical consistency requirement alpha_inj <= alpha_obs
-        (an aged spectrum can only be steeper than the injected one).
-
-(3) EQUIPARTITION vs MINIMUM ENERGY  [conceptual correction]
-    pysynch's `normalize(method='equipartition')` solves u_B = zeta * u_e and
-    then sets total_energy_density = zeta*u_e + u_B = 2 u_B.  v1 reported that
-    number as "u_min".  It is the EQUIPARTITION total energy density, not the
-    minimum-energy one.  The classical minimum-energy condition is
-    u_B = (3/4) u_particles, giving
-
-        B_eq / B_me = (4/3)^(2/7) ~= 1.0851
-
-    pysynch already ships `method='minimum_energy'`, which v1 never used.
-    v2 reports both solutions, both energy budgets, the minimum pressure
-    p_min = u_min/3, and verifies the (4/3)^(2/7) ratio as an automatic
-    numerical QA check on the whole normalisation chain.
-
-    NOTE ON zeta: in pysynch, `zeta` is the ratio u_B/u_particles enforced at
-    equipartition, i.e. zeta = 1 + kappa where kappa is the ratio of the
-    energy density in non-radiating particles (protons) to that in electrons.
-    zeta = 1 therefore means an electron-positron plasma with NO proton
-    contribution.  v2 exposes --kappa as the physically transparent control
-    and documents the mapping in every output file.
-
-(4) SELF-CONSISTENT ALPHA_INJ <-> B <-> AGED SPECTRUM
-    B_eq depends on alpha_inj; the Tribble fits depend on B; the aged electron
-    spectrum depends on the age, which depends on B.  v1 broke this circle by
-    taking a single provisional pass.  v2 iterates to a fixed point (tolerance
-    on ln B), and -- importantly -- uses pysynch's `spectrum='aged'` (a JP
-    aged electron spectrum implemented in C) or `spectrum='broken'` for the
-    equipartition normalisation once a break has been measured, instead of
-    assuming an unbroken power law.  This matters whenever the normalisation
-    band lies at or above the break, where a power-law assumption
-    systematically over-estimates the number of radiating electrons.
-
-(5) VOLUME
-    A single global sphere/ellipsoid/cylinder is a poor description of a WAT,
-    a tail, an X-shaped source or a double.  v2 adds a per-column,
-    per-connected-segment integration,
-
-        V = sum over columns, over segments  pi * (d_seg/2)^2 * dx
-
-    performed along both principal axes, which handles concave and
-    disconnected morphologies correctly.  All four estimators (sphere,
-    ellipsoid, cylinder, integrated) are reported; the integrated one is the
-    default and the spread between them enters the error budget as a
-    geometry systematic.  A filling factor phi is an explicit parameter
-    (B_eq scales as phi^(-2/7)).  The geometry error is no longer a hardcoded
-    15%: it is measured by re-deriving the volume at several segmentation
-    thresholds and under both beam-deconvolution conventions.
-
-(6) SPECTRAL-INDEX MAPS
-    v1 looped in pure Python over every pixel and folded the calibration
-    systematic into the per-pixel weights.  That conflates two very different
-    errors: image noise is independent between pixels, whereas a flux-scale
-    error is COHERENT across the entire map and does not average down.  v2
-    vectorises the fit (orders of magnitude faster) and reports
-    sigma_alpha_stat, sigma_alpha_sys and sigma_alpha_tot as separate maps,
-    plus chi2/dof, band-count and -- where >= 4 bands exist -- a spectral
-    CURVATURE map, which is the resolved diagnostic that actually
-    distinguishes ageing from a pure power law.
-
-(7) RESOLVED AGEING MAPS
-    Per-pixel JP/KP/CI fitting is not identifiable with 3-4 bands.  v2
-    adaptively bins the source (quadtree to a target signal-to-noise, floored
-    at one beam), fixes the injection index at the ensemble value, and fits
-    only (normalisation, break) per region -- which IS identifiable.  For
-    speed the model spectra are precomputed ONCE as pysynch emissivity
-    templates on an age grid (JP, via setage) or break grid (CI, via
-    setbreak); each region then costs one analytic normalisation and a chi2.
-
-(8) TWO INDEPENDENT FITTING ENGINES: synchrofit AND BRATS
-    --engine {synchrofit, brats, both}
-
-    BRATS (Harwood et al. 2013, 2015; ascl:1806.025) is driven exactly the way
-    its own Python wrapper drives it -- a text file of commands piped to the
-    program's stdin -- so results are identical to typing them by hand. The
-    pipeline stages the common-beam maps into a BRATS working directory,
-    writes the DS9 region files, generates the command script, runs it, and
-    reads the exported tables and FITS maps back.
-
-    --engine both runs the two backends over the same maps, with the same
-    per-map RMS and flux-scale errors, and cross-compares them. They share no
-    source code, so agreement is evidence about the data and disagreement is a
-    model-implementation systematic worth quoting.
-
-    --brats-interactive instead prepares the workspace and opens BRATS in a
-    NEW terminal window, for when you want to drive its PGPLOT session by
-    hand. If no terminal can be opened, the workspace and a README are still
-    written and the exact command to run is reported.
-
-    --open-brats is the other way round, and is usually what you want: the
-    pipeline runs to completion first -- every fit, map, figure and table
-    written -- and only then opens BRATS in a new window, sitting in the
-    prepared workspace with this run's injection index and magnetic field
-    already in place. Because it is the last thing that happens, nothing
-    about the science products depends on it.
-
-    Where a scripted BRATS run has just finished, that session is pointed at
-    the .brats file its `fullexport` wrote, so a single `fullimport` restores
-    every region, fit, age and error rather than recomputing them -- a
-    resolved fit can be hours of work and is otherwise lost when the scripted
-    process exits. --open-brats also works with --engine synchrofit, where no
-    BRATS stage ran at all: the workspace is built at that point instead.
-
-    Interactive BRATS draws through PGPLOT, which needs an X server. For a
-    containerised BRATS the display is forwarded automatically (the host X
-    socket on Linux, host.docker.internal on macOS); if no X server can be
-    found this is reported up front, because the failure mode is otherwise
-    baffling -- BRATS starts, takes commands, and then does nothing the
-    moment you ask it to plot.
-
-    BRATS can be driven natively or inside a container
-    (--brats-container docker|podman|apptainer|singularity). The container
-    path is not a convenience: BRATS depends on PGPLOT and FUNTOOLS, which
-    are packaged on Linux but have no maintained macOS build, so on a Mac it
-    is usually the only way to run BRATS at all. A Dockerfile is written into
-    every workspace, so the workspace is a complete, self-contained record --
-    a collaborator who receives it can rebuild the exact environment the
-    numbers came from. The stdin-piping contract is identical either way.
-
-(9) READING BRATS' EXPORTS CORRECTLY  [correctness-critical]
-    BRATS' exportdata files DO NOT all have the same column layout, and the
-    layout is not implied by the menu label. Read from the writer in main.c:
-
-        ages / chi-squared / normalisation   1 column
-        age errors                           2 columns, "+plus -minus"
-        spectral index                       2 columns, alpha, sigma_alpha
-        injection index                      2 columns, inject, SUM chi^2
-        injection index by region            2 columns, region_id, value
-        region array                         3 columns, x, y, region_id
-
-    Reading column 0 of every file -- the obvious thing to do, and what v2.0
-    did -- is therefore right for only about half of them. For the injection
-    index it returns the trial GRID instead of the chi-square curve, so
-    minimising it returns the first grid node whatever the data say: the
-    reported "BRATS injection index" was just `mininject`, independent of the
-    observations. For the per-region injection exports it returned region ID
-    numbers. For the region array it returned x pixel coordinates. Each of
-    those is a wrong number that looks entirely plausible in a summary table.
-    v2.1 encodes the layout explicitly, per token, and reads the column that
-    holds the measurement.
-
-    The injection index is then finished properly rather than left as a node
-    number: the chi-square minimum is refined with a parabola through the
-    surrounding nodes, and the Delta chi-square = 1 interval is taken AFTER
-    dividing the summed chi-square by the beam area, because regions inside
-    one beam are not independent measurements (BRATS Cookbook). Skipping that
-    division gives an error bar roughly sqrt(A_beam) too small. A minimum
-    that lands on the edge of the search range is reported as a LIMIT, not a
-    measurement.
-
-(10) BRATS RESULTS BECOME SCIENCE PRODUCTS
-    BRATS reports resolved quantities per REGION, plus a region-array export
-    giving the region ID of every pixel. v2.1 uses that to paint every
-    exported quantity back onto the pipeline's own pixel grid, so the
-    spectral-age, age-error, chi-square and spectral-index maps come out as
-    FITS with the real WCS attached and as publication figures. This is done
-    in addition to BRATS' own FITS writer because that writer emits a minimal
-    header (nothing can be overlaid on it without re-attaching the WCS by
-    hand), `exportasfits` silently produces PNGs on older builds, and the
-    error export carries BOTH wings whereas the FITS map holds only one.
-
-    The BRATS source itself notes that its x/y mapping "has become crossed
-    over somewhere", so the axis order is not taken on trust: both
-    orientations are tried and scored against the pipeline's own source mask,
-    and a low on-source fraction is reported as a warning rather than being
-    quietly plotted.
-
-    These land in brats_maps/, deliberately not beside the synchrofit
-    products: two files called spectral_index.fits from different codes would
-    be an easy and serious mistake, and comparing the two engines is the
-    whole point of running both.
-
-(11) CONTOUR OVERLAYS
-    A spectral-index or spectral-age map is a derived quantity with no
-    morphology of its own. Drawn alone there is no way to tell which
-    structure a given value belongs to -- hotspot, lobe, or tail. Every
-    derived map is therefore drawn with total-intensity contours from a
-    reference band over it, on the conventional radio ladder (3 sigma, then
-    doubling), with the restoring beam marked. The reference defaults to the
-    astrometric reference map, which is the one the pixel grid is actually
-    registered against; --contour-label, --contour-sigma, --contour-factor
-    and --contour-max-levels control it, and --no-contours turns it off.
-
-    Model coverage differs between the engines and is enforced rather than
-    papered over: BRATS fits JP, KP, Tribble (JP), CI and CI-off, but it
-    CANNOT fit KP-Tribble -- fitkptribble is commented out in its source and
-    the export menu has no Tribble (KP) entries. Ask for KP-Tribble and the
-    pipeline says so and points you at synchrofit, which does implement it.
-
-===============================================================================
-CONVENTIONS  (stated explicitly because sign conventions cause real errors)
-===============================================================================
-
-    S_nu  proportional to  nu^(alpha)          alpha is SIGNED and NEGATIVE
-                                               for optically thin synchrotron
-    alpha_positive = -alpha                    both are reported everywhere
-    N(E) dE proportional to E^(-s) dE          s is the injection ENERGY index
-    alpha_inj_positive = (s - 1)/2
-    s = 1 - 2*alpha_signed                     ( = pysynch's `injection` = p )
-
-    Energy densities are J m^-3, magnetic fields Tesla internally and
-    microGauss in reports (1 uG = 1e-10 T), volumes m^3, ages Myr.
-
-===============================================================================
-EXTERNAL DEPENDENCIES
-===============================================================================
-
-    required : numpy, scipy, astropy, matplotlib, radio_beam, reproject
-    optional : mhardcastle/pysynch  (+ GSL)   -- equipartition / minimum energy
-                                                 and the JP/broken emissivity
-                                                 templates used for resolved
-                                                 ageing maps
-    optional : synchrofit/synchrofit          -- the six-model ageing ensemble
-
-    The pipeline degrades gracefully: without pysynch you still get maps,
-    SEDs and spectral indices; without synchrofit you still get equipartition
-    and the pysynch-native JP analysis.  Nothing is ever silently substituted
-    -- an unavailable model is reported as unavailable, never replaced by a
-    power law behind your back.
-
-===============================================================================
-KEY REFERENCES
-===============================================================================
-    Burbidge (1959)                    minimum energy
-    Pacholczyk (1970)                  synchrotron formalism, F(x)
-    Jaffe & Perola (1973)              JP ageing model
-    Kardashev (1962); Pacholczyk       KP ageing model
-    Tribble (1993)                     inhomogeneous-field ageing
-    Myers & Spangler (1985)            CI / CI-off
-    Beck & Krause (2005)               revised equipartition
-    Hardcastle et al. (1998, 2002)     pysynch formalism
-    Harwood et al. (2013, 2015)        resolved spectral ageing (BRATS)
-    Turner et al. (2018a,b)            synchrofit; Tribble implementation
-    Croston et al. (2005)              zeta / proton content in FR sources
 """
 
 from __future__ import annotations
@@ -371,11 +48,9 @@ from scipy.ndimage import binary_dilation, binary_fill_holes, label
 #: the connected-component code uses this unambiguous alias instead.
 from scipy.ndimage import label as connected_components
 
-__version__ = "2.1.0"
-
 
 # ===========================================================================
-# PART 1.  OPTIONAL BACKENDS -- introspected, never assumed
+# PART 1.  OPTIONAL BACKENDS
 # ===========================================================================
 
 class SynchrofitAPI:
@@ -3695,7 +3370,7 @@ def _assemble_injection_index(
 
 
 # ===========================================================================
-# PART 11.  pysynch ENGINE
+# PART 11.  PySynch ENGINE
 # ===========================================================================
 
 def validate_pysynch_cosmology(cosmology=DEFAULT_COSMOLOGY) -> None:
@@ -4700,7 +4375,7 @@ def adopted_field_from_beq(
 
 
 # ===========================================================================
-# PART 13.  SELF-CONSISTENT alpha_inj <-> B <-> AGED-SPECTRUM SOLUTION
+# PART 13.  SELF-CONSISTENT INJECTION INDEX <-> B <-> AGED-SPECTRUM SOLUTION
 # ===========================================================================
 #
 # The three quantities are mutually dependent:
