@@ -112,18 +112,15 @@ SCIENTIFIC RATIONALE
     for the injection index and break frequency, which is far more defensible
     than a grid-peak +/- value when the spectrum is sparsely sampled.
 
-(2) INJECTION INDEX  [the central scientific quantity here]
+(2) INJECTION INDEX 
     A low-frequency power-law slope is an OBSERVED spectral index.  It equals
     the injection index only if the emitting plasma is unaged at those
     frequencies, which cannot be assumed.
     This version:
-      * always fits the full six-model ensemble when synchrofit is available;
-      * gates every model on formal identifiability (n_points > k + 1),
-        because with 3-4 bands AICc is undefined for the 3-parameter models
-        and CI-OFF (k = 4) is unconstrained;
+      * always fits the full six-model ensemble when SynchroFit is available;
+      * gates every model on formal identifiability (n_points > k + 1);
       * additionally runs a RESTRICTED ensemble in which s is held fixed and
-        only (normalisation, break) are free (k = 2), which IS identifiable
-        with 4 bands, and reports it as the recommended product at low band
+        only (normalisation, break) are free (k = 2), and reports it as the recommended product at low band
         count;
       * performs a parametric bootstrap over the flux uncertainties so the
         quoted error is not purely the grid spacing;
@@ -134,7 +131,7 @@ SCIENTIFIC RATIONALE
       * enforces the physical consistency requirement alpha_inj <= alpha_obs
         (an aged spectrum can only be steeper than the injected one).
 
-(3) EQUIPARTITION vs MINIMUM ENERGY  [conceptual correction]
+(3) EQUIPARTITION vs MINIMUM ENERGY
     PySynch’s `normalize(method=‘equipartition’)` solves u_B = zeta * u_e and
     then sets total_energy_density = zeta*u_e + u_B = 2 u_B.
     This version reports both solutions, both energy budgets, the minimum pressure
@@ -148,7 +145,7 @@ SCIENTIFIC RATIONALE
     contribution.  This version exposes —kappa as the physically transparent control
     and documents the mapping in every output file.
 
-(4) SELF-CONSISTENT ALPHA_INJ <-> B <-> AGED SPECTRUM
+(4) SELF-CONSISTENT INJECTION INDEX <-> B <-> AGED SPECTRUM
     B_eq depends on alpha_inj; the Tribble fits depend on B; the aged electron
     spectrum depends on the age, which depends on B. This version iterates to a fixed point (tolerance
     on ln B), and — importantly — uses pysynch’s `spectrum=‘aged’` (a JP
@@ -159,9 +156,7 @@ SCIENTIFIC RATIONALE
     systematically over-estimates the number of radiating electrons.
 
 (5) VOLUME
-    A single global sphere/ellipsoid/cylinder is a poor description of a WAT,
-    a tail, an X-shaped source or a double.  This version adds a per-column,
-    per-connected-segment integration,
+    A single global sphere/ellipsoid/cylinder is a poor description of a (complex) radio source. This version adds a per-column, per-connected-segment integration,
 
         V = sum over columns, over segments  pi * (d_seg/2)^2 * dx
 
@@ -187,9 +182,9 @@ SCIENTIFIC RATIONALE
     only (normalisation, break) per region — which IS identifiable.  For
     speed the model spectra are precomputed ONCE as pysynch emissivity
     templates on an age grid (JP, via setage) or break grid (CI, via
-    setbreak); each region then costs one analytic normalisation and a chi2.
+    setbreak); each region then costs one analytic normalisation and a chi^2.
 
-(8) TWO INDEPENDENT FITTING ENGINES: synchrofit AND BRATS
+(8) TWO INDEPENDENT FITTING ENGINES: BRATS And SynchroFit
     —engine {synchrofit, brats, both}
 
     BRATS (Harwood et al. 2013, 2015; ascl:1806.025) is driven exactly the way
@@ -239,7 +234,7 @@ SCIENTIFIC RATIONALE
     a collaborator who receives it can rebuild the exact environment the
     numbers came from. The stdin-piping contract is identical either way.
 
-(9) READING BRATS’ EXPORTS CORRECTLY  [correctness-critical]
+(9) READING BRATS’ EXPORTS CORRECTLY 
     BRATS’ exportdata files DO NOT all have the same column layout, and the
     layout is not implied by the menu label. Read from the writer in main.c:
 
@@ -281,13 +276,7 @@ SCIENTIFIC RATIONALE
     hand), `exportasfits` silently produces PNGs on older builds, and the
     error export carries BOTH wings whereas the FITS map holds only one.
 
-    The BRATS source itself notes that its x/y mapping “has become crossed
-    over somewhere”, so the axis order is not taken on trust: both
-    orientations are tried and scored against the pipeline’s own source mask,
-    and a low on-source fraction is reported as a warning rather than being
-    quietly plotted.
-
-    These land in brats_maps/, deliberately not beside the synchrofit
+    These land in brats_maps/, deliberately not beside the SynchroFit
     products: two files called spectral_index.fits from different codes would
     be an easy and serious mistake, and comparing the two engines is the
     whole point of running both.
@@ -307,7 +296,7 @@ SCIENTIFIC RATIONALE
     papered over: BRATS fits JP, KP, Tribble (JP), CI and CI-off, but it
     CANNOT fit KP-Tribble — fitkptribble is commented out in its source and
     the export menu has no Tribble (KP) entries. Ask for KP-Tribble and the
-    pipeline says so and points you at synchrofit, which does implement it.
+    pipeline says so and points you at SynchroFit, which does implement it.
 
 ===============================================================================
 CONVENTIONS  (stated explicitly because sign conventions cause real errors)
@@ -334,9 +323,9 @@ EXTERNAL DEPENDENCIES
                                                  ageing maps
     optional : synchrofit/synchrofit          — the six-model ageing ensemble
 
-    The pipeline degrades gracefully: without pysynch you still get maps,
-    SEDs and spectral indices; without synchrofit you still get equipartition
-    and the pysynch-native JP analysis.  Nothing is ever silently substituted
+    The pipeline degrades gracefully: without PySynch you still get maps,
+    SEDs and spectral indices; without SynchroFit you still get equipartition
+    and the PySynch-native JP analysis.  Nothing is ever silently substituted
     — an unavailable model is reported as unavailable, never replaced by a
     power law behind your back.
 
