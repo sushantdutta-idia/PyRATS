@@ -13,13 +13,13 @@ It drives three established codes from one command line, on the same pixels and 
 
 | engine | role |
 |---|---|
-| [synchrofit](https://github.com/synchrofit/synchrofit) | the six-model spectral-ageing ensemble |
-| pysynch (M. Hardcastle) | equipartition / minimum energy, aged electron spectra |
+| PySynch (M. Hardcastle) | equipartition / minimum energy, aged electron spectra |
 | [BRATS](https://github.com/JeremyHarwood/BRATS) | resolved spectral ageing, as an independent cross-check |
+| [SynchroFit](https://github.com/synchrofit/synchrofit) | the six-model spectral-ageing ensemble |
 
 The name comes from **Py**Synch + B**RATS**.
 
-PyRATS — spectral ageing and energetics of radio sources (PySynch + BRATS)
+PyRATS — spectral ageing and energetics of radio sources (PySynch + BRATS/SynchroFit)
 Copyright (C) 2026  Sushant Dutta
 
 This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
